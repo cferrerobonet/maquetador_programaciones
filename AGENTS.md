@@ -24,7 +24,7 @@ App de escritorio (macOS y Windows, Python 3.13 + PyQt6) que toma una programaci
 | Archivos añadidos, ruta de salida y paginación (sin interfaz) | `archivos.py` |
 | Actualizaciones (GitHub, sha256) · sustitución en macOS · novedades | `actualizaciones.py` · `actualizar_mac.py` · `novedades.py` · `ui/actualizar.py` |
 | Ajustes recordados · rutas y recursos | `ajustes.py` · `rutas.py` |
-| Compilación | `MaquetadorProgramaciones.spec`, `scripts/build/`, `scripts/build_windows.ps1`, `.github/workflows/` |
+| Compilación (DMG de macOS; instalador y portable de Windows) | `MaquetadorProgramaciones.spec`, `installer_windows.iss`, `scripts/build/`, `scripts/build_windows.ps1`, `.github/workflows/` |
 
 `actualizar_mac.py` es el mismo archivo que en Partes de salida: si se corrige, se corrige en los dos.
 

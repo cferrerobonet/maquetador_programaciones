@@ -9,7 +9,6 @@ import platform
 import re
 import ssl
 import urllib.request
-import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from threading import Thread
@@ -27,9 +26,9 @@ PAGINA_DE_RELEASES = RELEASES_WEB
 
 INSTALADOR_POR_SISTEMA = {
     "Darwin": "MaquetadorProgramaciones_v{v}_macOS.dmg",
-    "Windows": "MaquetadorProgramaciones-{v}-Windows-Portable.zip",
+    "Windows": "MaquetadorProgramaciones-{v}-Windows-Setup.exe",
 }
-_EXTENSION_POR_SISTEMA = {"Darwin": ".dmg", "Windows": ".zip"}
+_EXTENSION_POR_SISTEMA = {"Darwin": ".dmg", "Windows": ".exe"}
 HOSTS_PERMITIDOS = ("api.github.com", "github.com", "objects.githubusercontent.com")
 TIMEOUT_CONSULTA = 5
 TIMEOUT_DESCARGA = 30
@@ -178,35 +177,17 @@ def abrir_ruta(ruta: str) -> None:
         subprocess.run(["/usr/bin/xdg-open", ruta], check=False)  # nosec B603
 
 
-def descomprimir_portable(zip_: Path, carpeta: Path) -> Path:
-    """Descomprime el .zip de Windows en `carpeta`, sin salirse de ella; devuelve la carpeta."""
-    carpeta = Path(carpeta)
-    carpeta.mkdir(parents=True, exist_ok=True)
-    raiz = carpeta.resolve()
-    with zipfile.ZipFile(zip_) as z:
-        for miembro in z.namelist():
-            if not (raiz / miembro).resolve().is_relative_to(raiz):
-                raise DescargaNoVerificada("El archivo descargado trae rutas no permitidas; no se abre.")
-        z.extractall(carpeta)
-    return carpeta
-
-
 def instalar_descarga(ruta: str) -> str:
     """Instala lo descargado; devuelve el aviso de la vía manual o vacío.
 
     macOS: sustituye la app allí donde está instalada (`actualizar_mac`); si no se puede,
     abre el DMG y el aviso dice a qué carpeta arrastrarla.
-    Windows (versión portable): descomprime el .zip junto a él, abre la carpeta y avisa.
+    Windows: abre el instalador, que sustituye la versión anterior (mismo `AppId`).
     """
     if platform.system() == "Darwin":
         from . import actualizar_mac
         from .rutas import carpeta_datos
 
         return actualizar_mac.instalar(Path(ruta), carpeta_datos() / "logs").aviso
-    zip_ = Path(ruta)
-    carpeta = descomprimir_portable(zip_, zip_.with_suffix(""))
-    abrir_ruta(str(carpeta))
-    return (
-        f"He descomprimido la versión nueva en:\n{carpeta}\n\n"
-        "Se cierra esta ventana: abre la aplicación desde esa carpeta y borra la anterior cuando quieras."
-    )
+    abrir_ruta(ruta)
+    return ""

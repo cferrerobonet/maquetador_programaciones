@@ -3,7 +3,6 @@
 import hashlib
 import io
 import json
-import zipfile
 
 import pytest
 
@@ -11,7 +10,7 @@ from maquetador import actualizaciones as act
 from maquetador.novedades import novedades
 
 VERSION = "9.9.9"
-NOMBRE = f"MaquetadorProgramaciones-{VERSION}-Windows-Portable.zip"
+NOMBRE = f"MaquetadorProgramaciones-{VERSION}-Windows-Setup.exe"
 URL = f"{act.DESCARGAS_WEB}/v{VERSION}/{NOMBRE}"
 API_TAG = f"https://api.github.com/repos/{act.REPO}/releases/tags/v{VERSION}"
 CONTENIDO = b"archivo ficticio " * 5000
@@ -66,11 +65,13 @@ def test_ultima_version_por_la_api(monkeypatch):
         assert req.full_url == act.RELEASES_URL
         cuerpo = {"tag_name": "v1.2.3", "body": "Novedad", "assets": [
             {"name": "x_macOS.dmg", "browser_download_url": f"{act.DESCARGAS_WEB}/v1.2.3/x_macOS.dmg"},
-            {"name": "x.zip", "browser_download_url": f"{act.DESCARGAS_WEB}/v1.2.3/x.zip"}]}
+            {"name": "x-Windows-Portable.zip", "browser_download_url": f"{act.DESCARGAS_WEB}/v1.2.3/x-Windows-Portable.zip"},
+            {"name": "x-Windows-Setup.exe", "browser_download_url": f"{act.DESCARGAS_WEB}/v1.2.3/x-Windows-Setup.exe"}]}
         return _Respuesta(json.dumps(cuerpo).encode(), req.full_url)
 
     monkeypatch.setattr(act.urllib.request, "urlopen", urlopen)
-    assert act.ultima_version() == ("1.2.3", f"{act.DESCARGAS_WEB}/v1.2.3/x.zip", "Novedad")
+    # En Windows se elige el instalador, no el portable.
+    assert act.ultima_version() == ("1.2.3", f"{act.DESCARGAS_WEB}/v1.2.3/x-Windows-Setup.exe", "Novedad")
 
 
 def test_si_la_api_falla_se_pregunta_a_la_web(monkeypatch):
@@ -159,27 +160,14 @@ def test_en_macos_la_descarga_se_pasa_a_actualizar_mac(monkeypatch, tmp_path):
     assert pedidas == [(tmp_path / "x.dmg", carpeta_datos() / "logs")]
 
 
-def test_en_windows_se_descomprime_el_portable_y_se_abre_la_carpeta(monkeypatch, tmp_path):
-    zip_ = tmp_path / "MaquetadorProgramaciones-1.0.0-Windows-Portable.zip"
-    with zipfile.ZipFile(zip_, "w") as z:
-        z.writestr("MaquetadorProgramaciones.exe", "ficticio")
+def test_en_windows_se_abre_el_instalador(monkeypatch, tmp_path):
+    exe = tmp_path / "MaquetadorProgramaciones-1.0.0-Windows-Setup.exe"
+    exe.write_text("ficticio")
     abiertas = []
     monkeypatch.setattr(act.platform, "system", lambda: "Windows")
     monkeypatch.setattr(act, "abrir_ruta", abiertas.append)
-    aviso = act.instalar_descarga(str(zip_))
-    carpeta = zip_.with_suffix("")
-    assert (carpeta / "MaquetadorProgramaciones.exe").read_text() == "ficticio"
-    assert abiertas == [str(carpeta)]
-    assert str(carpeta) in aviso
-
-
-def test_un_zip_con_rutas_fuera_de_la_carpeta_se_rechaza(tmp_path):
-    zip_ = tmp_path / "malo.zip"
-    with zipfile.ZipFile(zip_, "w") as z:
-        z.writestr("../fuera.txt", "x")
-    with pytest.raises(act.DescargaNoVerificada):
-        act.descomprimir_portable(zip_, tmp_path / "malo")
-    assert not (tmp_path / "fuera.txt").exists()
+    assert act.instalar_descarga(str(exe)) == ""
+    assert abiertas == [str(exe)]
 
 
 def test_novedades_de_una_version(tmp_path):

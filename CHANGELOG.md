@@ -1,5 +1,9 @@
 # Cambios
 
+## [0.1.1] - 2026-11-19
+
+- Windows: instalador además de la versión portable. La actualización automática descarga el instalador y lo abre; sustituye la versión anterior sin pedir permisos de administrador.
+
 ## [0.1.0] - 2026-11-19
 
 - Primera versión: eliges una programación de referencia (.docx) y una o varias programaciones que no respetan su maquetación; la app las comprueba y devuelve copias con la maquetación de la referencia, sin cambiar el contenido.

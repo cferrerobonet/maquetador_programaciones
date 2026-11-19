@@ -1,4 +1,4 @@
-﻿# Compilación en Windows: ejecutable (PyInstaller) y versión portable en .zip.
+﻿# Compilación en Windows: ejecutable (PyInstaller), instalador (Inno Setup) y versión portable en .zip.
 #
 # IMPORTANTE: este fichero se guarda en UTF-8 CON marca de orden de bytes (BOM):
 # Windows PowerShell 5.1 lee sin BOM como ANSI y rompe los acentos.
@@ -25,7 +25,17 @@ $Exe = "dist\MaquetadorProgramaciones\MaquetadorProgramaciones.exe"
 if (-not (Test-Path $Exe)) { Write-Host "[ERROR] PyInstaller no generó $Exe"; exit 1 }
 Write-Host "[OK] Ejecutable: $Exe"
 
-# El nombre del .zip lo espera la actualización automática (actualizaciones.py).
+# Versión portable para el equipo donde no se pueda instalar.
 $Zip = "Output\MaquetadorProgramaciones-$Version-Windows-Portable.zip"
 Compress-Archive -Path "dist\MaquetadorProgramaciones\*" -DestinationPath $Zip -CompressionLevel Optimal
 Write-Host "[OK] Portable: $Zip"
+
+# Instalador: el que usa la actualización automática (actualizaciones.py).
+$Inno = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if (-not (Test-Path $Inno)) {
+    $Inno = Get-ChildItem -Path "C:\Program Files*" -Recurse -Filter "ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $Inno) { Write-Host "[ERROR] Inno Setup no encontrado"; exit 1 }
+& $Inno "/DMyAppVersion=$Version" installer_windows.iss
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] Inno Setup falló"; exit 1 }
+Write-Host "[OK] Instalador: Output\MaquetadorProgramaciones-$Version-Windows-Setup.exe"

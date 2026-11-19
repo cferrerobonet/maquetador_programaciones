@@ -57,7 +57,7 @@ jobs:
           pytest
 
   windows:
-    name: Portable de Windows
+    name: Instalador y portable de Windows
     needs: pruebas
     if: ${{ inputs.plataforma != 'macos' }}
     runs-on: windows-latest
@@ -68,14 +68,18 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           architecture: x64
           cache: pip
-      - name: Compilar exe y .zip portable
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Compilar exe, instalador y .zip portable
         # pwsh lee los .ps1 como UTF-8; el powershell clásico rompería los acentos.
         shell: pwsh
         run: ./scripts/build_windows.ps1
       - uses: actions/upload-artifact@v7
         with:
           name: MaquetadorProgramaciones-Windows
-          path: Output/*.zip
+          path: |
+            Output/*.exe
+            Output/*.zip
           if-no-files-found: error
 
   macos:
@@ -128,7 +132,7 @@ jobs:
           set -euo pipefail
           etiqueta="${GITHUB_REF_NAME}"
           if [ "${GITHUB_REF_TYPE}" != "tag" ]; then etiqueta=$(git describe --tags --abbrev=0); fi
-          archivos=$(find instaladores -type f \( -name '*.dmg' -o -name '*.zip' \))
+          archivos=$(find instaladores -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \))
           # Notas del release (las que enseña la ventana de actualización): la entrada de CHANGELOG.md.
           v="${etiqueta#v}"
           awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {p=1; next} /^## \[/ {p=0} p' CHANGELOG.md > notas.md || true
