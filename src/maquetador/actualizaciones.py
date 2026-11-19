@@ -1,0 +1,212 @@
+"""Aviso de versión nueva publicada en GitHub y descarga verificada (mismo esquema que Partes de salida)."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import platform
+import re
+import ssl
+import urllib.request
+import zipfile
+from collections.abc import Callable
+from pathlib import Path
+from threading import Thread
+from urllib.parse import quote, urlparse
+
+logger = logging.getLogger(__name__)
+
+#: Repositorio de las releases: único sitio donde aparece.
+REPO = "cferrerobonet/maquetador_programaciones"
+RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+#: Plan B sin API (60 consultas por hora y por IP): esta página redirige a `.../tag/vX.Y.Z`.
+RELEASES_WEB = f"https://github.com/{REPO}/releases/latest"
+DESCARGAS_WEB = f"https://github.com/{REPO}/releases/download"
+PAGINA_DE_RELEASES = RELEASES_WEB
+
+INSTALADOR_POR_SISTEMA = {
+    "Darwin": "MaquetadorProgramaciones_v{v}_macOS.dmg",
+    "Windows": "MaquetadorProgramaciones-{v}-Windows-Portable.zip",
+}
+_EXTENSION_POR_SISTEMA = {"Darwin": ".dmg", "Windows": ".zip"}
+HOSTS_PERMITIDOS = ("api.github.com", "github.com", "objects.githubusercontent.com")
+TIMEOUT_CONSULTA = 5
+TIMEOUT_DESCARGA = 30
+
+
+class DescargaNoVerificada(Exception):
+    """El archivo no se pudo comprobar o no coincide con el publicado: no se abre."""
+
+
+def url_de_confianza(url: str) -> bool:
+    partes = urlparse(url or "")
+    return partes.scheme == "https" and partes.hostname in HOSTS_PERMITIDOS
+
+
+def contexto_ssl() -> ssl.SSLContext:
+    return ssl.create_default_context()
+
+
+def _abrir(url: str, timeout: float = TIMEOUT_CONSULTA):
+    if not url_de_confianza(url):
+        raise ValueError(f"URL no permitida: {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": "maquetador-programaciones"})
+    return urllib.request.urlopen(req, timeout=timeout, context=contexto_ssl())  # nosec B310
+
+
+def _buscar_instalador(assets: list) -> str:
+    extension = _EXTENSION_POR_SISTEMA.get(platform.system())
+    if not extension:
+        return ""
+    for asset in assets:
+        if asset.get("name", "").lower().endswith(extension):
+            url = asset.get("browser_download_url", "")
+            return url if url_de_confianza(url) else ""
+    return ""
+
+
+def ultima_version() -> tuple[str, str, str]:
+    """`(versión, url del archivo, notas)`: la API y, si falla, la web."""
+    try:
+        with _abrir(RELEASES_URL) as r:
+            data = json.loads(r.read())
+        return (
+            data["tag_name"].lstrip("v"),
+            _buscar_instalador(data.get("assets", [])),
+            (data.get("body") or "").strip(),
+        )
+    except Exception as e:  # noqa: BLE001 - límite de la API o red
+        logger.info("La API de GitHub no respondió (%s); se pregunta a la web", e)
+    with _abrir(RELEASES_WEB) as r:
+        destino = r.geturl()
+    if "/tag/" not in destino:
+        raise ValueError(f"La web no redirigió a una versión: {destino}")
+    version = destino.rsplit("/tag/", 1)[1].lstrip("v")
+    plantilla = INSTALADOR_POR_SISTEMA.get(platform.system())
+    url = f"{DESCARGAS_WEB}/v{version}/{plantilla.format(v=version)}" if plantilla else ""
+    return version, url, ""
+
+
+def digest_del_asset(url: str) -> str:
+    """sha256 (hex) que publica la API de releases para el archivo de `url`; vacío si no se sabe."""
+    prefijo = DESCARGAS_WEB + "/"
+    if not url.startswith(prefijo):
+        return ""
+    etiqueta, _, nombre = url[len(prefijo):].partition("/")
+    if not etiqueta or not nombre or "/" in nombre:
+        return ""
+    with _abrir(f"https://api.github.com/repos/{REPO}/releases/tags/{quote(etiqueta)}") as r:
+        data = json.loads(r.read())
+    for asset in data.get("assets", []):
+        if asset.get("name") == nombre or asset.get("browser_download_url") == url:
+            digest = str(asset.get("digest") or "")
+            if digest.startswith("sha256:") and re.fullmatch(r"[0-9a-f]{64}", digest[7:]):
+                return digest[7:]
+    return ""
+
+
+def descargar_verificado(url: str, destino: Path, avance: Callable[[int], None] | None = None) -> Path:
+    """Descarga y devuelve el archivo solo si su sha256 es el que publica GitHub (si no, se borra)."""
+    destino = Path(destino)
+    if not url_de_confianza(url):
+        raise ValueError(f"URL no permitida: {url}")
+    try:
+        esperado = digest_del_asset(url)
+    except Exception as e:  # noqa: BLE001 - límite de la API o red
+        raise DescargaNoVerificada(f"No se pudo comprobar la suma del archivo en GitHub ({e}).") from e
+    if not esperado:
+        raise DescargaNoVerificada("No se pudo comprobar la suma del archivo: GitHub no la publica.")
+    suma = hashlib.sha256()
+    try:
+        with _abrir(url, timeout=TIMEOUT_DESCARGA) as r, open(destino, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            hecho = 0
+            while trozo := r.read(64 * 1024):
+                f.write(trozo)
+                suma.update(trozo)
+                hecho += len(trozo)
+                if avance and total:
+                    avance(min(100, hecho * 100 // total))
+    except BaseException:
+        destino.unlink(missing_ok=True)
+        raise
+    if suma.hexdigest() != esperado:
+        destino.unlink(missing_ok=True)
+        logger.warning("Descarga descartada: sha256 %s, GitHub publica %s", suma.hexdigest(), esperado)
+        raise DescargaNoVerificada("El archivo descargado no coincide con el publicado en GitHub; no se abre.")
+    return destino
+
+
+def es_mas_nueva(nueva: str, actual: str) -> bool:
+    try:
+        return tuple(int(x) for x in nueva.split(".")) > tuple(int(x) for x in actual.split("."))
+    except ValueError:
+        return False
+
+
+def comprobar(actual: str, avisar: Callable[[str, str, str], None], siempre: bool = False) -> None:
+    """En segundo plano. `siempre` avisa también si ya está al día (versión vacía)."""
+
+    def _hilo():
+        try:
+            version, url, notas = ultima_version()
+        except Exception as e:  # noqa: BLE001 - nunca debe tumbar la interfaz
+            logger.warning("No se pudo comprobar si hay versión nueva: %s", e)
+            if siempre:
+                avisar("", "", str(e))
+            return
+        logger.info("Versión instalada %s, última publicada %s", actual, version)
+        if es_mas_nueva(version, actual):
+            avisar(version, url, notas)
+        elif siempre:
+            avisar("", "", "")
+
+    Thread(target=_hilo, daemon=True).start()
+
+
+def abrir_ruta(ruta: str) -> None:
+    import os
+    import subprocess
+
+    sistema = platform.system()
+    if sistema == "Windows":
+        os.startfile(ruta)  # noqa: S606  # nosec B606
+    elif sistema == "Darwin":
+        subprocess.run(["/usr/bin/open", ruta], check=False)  # nosec B603
+    else:
+        subprocess.run(["/usr/bin/xdg-open", ruta], check=False)  # nosec B603
+
+
+def descomprimir_portable(zip_: Path, carpeta: Path) -> Path:
+    """Descomprime el .zip de Windows en `carpeta`, sin salirse de ella; devuelve la carpeta."""
+    carpeta = Path(carpeta)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    raiz = carpeta.resolve()
+    with zipfile.ZipFile(zip_) as z:
+        for miembro in z.namelist():
+            if not (raiz / miembro).resolve().is_relative_to(raiz):
+                raise DescargaNoVerificada("El archivo descargado trae rutas no permitidas; no se abre.")
+        z.extractall(carpeta)
+    return carpeta
+
+
+def instalar_descarga(ruta: str) -> str:
+    """Instala lo descargado; devuelve el aviso de la vía manual o vacío.
+
+    macOS: sustituye la app allí donde está instalada (`actualizar_mac`); si no se puede,
+    abre el DMG y el aviso dice a qué carpeta arrastrarla.
+    Windows (versión portable): descomprime el .zip junto a él, abre la carpeta y avisa.
+    """
+    if platform.system() == "Darwin":
+        from . import actualizar_mac
+        from .rutas import carpeta_datos
+
+        return actualizar_mac.instalar(Path(ruta), carpeta_datos() / "logs").aviso
+    zip_ = Path(ruta)
+    carpeta = descomprimir_portable(zip_, zip_.with_suffix(""))
+    abrir_ruta(str(carpeta))
+    return (
+        f"He descomprimido la versión nueva en:\n{carpeta}\n\n"
+        "Se cierra esta ventana: abre la aplicación desde esa carpeta y borra la anterior cuando quieras."
+    )
